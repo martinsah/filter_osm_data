@@ -10,6 +10,7 @@
 #include <chrono>
 #include <fstream>
 #include <thread>
+#include <regex>
 #include "geometry.hpp"
 
 #include "time_elapsed.hpp"
@@ -35,7 +36,12 @@ void run_parser(osm_sax_parser& parser, std::string input_filename)
 		is.clear();
 
 		boost::iostreams::filtering_stream<boost::iostreams::input> decompressor;
-		decompressor.push(boost::iostreams::gzip_decompressor());
+		{
+			const std::regex txt_regex("[a-z]+\\.gz");
+			if (std::regex_match(input_filename, txt_regex)) {
+				decompressor.push(boost::iostreams::gzip_decompressor());
+			}
+		}
 		decompressor.push(is);
 
 		parser.set_substitute_entities(true);
@@ -77,7 +83,7 @@ void run_node_filter(osm_sax_parser& parser)
 				if (parser.extentp.within(inp_node)) {
 					if (parser.nodes_kept_fine++ < 100)
 						inp_node.print_trkpt();
-					parser.nodes[std::stoll(inp_node.id)] = inp_node;
+					parser.nodes[inp_node.id] = inp_node;
 
 				}
 			}
@@ -145,6 +151,9 @@ int main(int ac, char** av)
 	std::string out_csv_filename = vm["out_csv"].as<std::string>();
 	std::string out_way_csv_filename = vm["way_csv"].as<std::string>();
 
+	//
+	// Load boundary polygon 
+	//
 	if (polygon_filename != "") {
 		ifstream pf(polygon_filename);
 		if (!pf)
@@ -163,7 +172,7 @@ int main(int ac, char** av)
 	std::vector<node> extents = { {latlow, lonlow},{latlow, lonhigh},{lathigh,lonhigh},{lathigh,lonlow} };
 	
 	for (auto& nd : extents) {
-		std:cout << "\n";
+		std::cout << "\n";
 		nd.print();
 	}
 
@@ -216,23 +225,40 @@ int main(int ac, char** av)
 
 	std::cout << "\nkept: " << parser.way_count_kept << " ways based on tag k/v";
 	int y = 0;
+	// Loop through ways 
 	for (auto& way : parser.ways) {
-		
+		// Filter nodes into new container based on their Way membership.
 		int x = 0;
 		for (auto& nd : way.second.nodes) {
-			auto id = std::stoll(nd.id);
-			if (parser.nodes.count(id)) {
+			if (parser.nodes.count(nd.id)) {
+				parser.nodes[nd.id].roads++;
 				x++;
 			}
 		}
 		if (x) {
+			way.second.keep = true;
 			y++;
-			std::cout << "\nname: " << way.second.get_tag_string_if_exists("name");
-			std::cout << "\n\tnd count: " << way.second.nodes.size();
-			std::cout << "\n\tnd within bounds: " << x;
+			//std::cout << "\nname: " << way.second.get_tag_string_if_exists("name");
+			//std::cout << "\n\tnd count: " << way.second.nodes.size();
+			//std::cout << "\n\tnd within bounds: " << x;
+		}
+		else {
+			way.second.keep = false;
 		}
 	}
-	std::cout << "\n\nkept: " << y << " ways that are within the boundary";
+
+	for (auto& node : parser.nodes) {
+		if (node.second.roads) {
+			std::cout << node.second.print_osm();
+		}
+	}
+
+	for (auto& way : parser.ways) {
+		if (way.second.keep) {
+			std::cout << way.second.print_osm();
+		}
+	}
+
 
 	return 0;
 }

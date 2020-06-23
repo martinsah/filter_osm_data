@@ -20,7 +20,7 @@ struct tag {
 };
 
 struct node : point{
-    std::string id;
+    uint64_t id;
 	uint64_t num;
 	uint32_t norm_num;
 	//long double lat = 0.0;
@@ -61,6 +61,12 @@ struct node : point{
 		ss << "<trkpt lat=\"" << std::setprecision(10) << lat << "\" lon=\"" << lon << "\"><name>" << distance << "</name></trkpt>";
 		return ss.str();
 	}
+    std::string print_osm() {
+        std::stringstream ss;
+        ss.imbue(std::locale(std::cout.getloc(), new std::numpunct<char>()));
+        ss << "\n<node id=\"" << id << "\" lat=\"" << std::setprecision(10) << lat << "\" lon=\"" << lon << "\"/>";
+        return ss.str();
+    }
 };
 
 enum class way_types {
@@ -70,12 +76,12 @@ enum class way_types {
 };
 
 struct way {
-	std::string id;
+	uint64_t id;
 	std::string name;
 	std::vector<node> nodes;
 	std::vector<std::reference_wrapper<node>> v_node_refs;
 	std::unordered_map<std::string, std::string>tags;
-
+    bool keep;
 	std::string get_tag_string_if_exists(std::string key, std::string noname = "noname")
 	{
 		if (tags.count(key))
@@ -83,6 +89,21 @@ struct way {
 		else
 			return(noname);
 	}
+
+    std::string print_osm()
+    {
+        std::stringstream r;
+        r.imbue(std::locale(std::cout.getloc(), new std::numpunct<char>()));
+        r << "\n<way id=\"" << id << "\">";
+        for (auto& nd : nodes) {
+            r << "\n <nd ref=\"" << nd.id << "\"/>";
+        }
+        for (auto& kv : tags) {
+            r << "\n <tag k=\"" << kv.first << "\" v=\"" << kv.second << "\"/>";
+        }
+        r << "\n</way>";
+        return r.str();
+    }
 };
 
 struct extent_s {
@@ -130,7 +151,7 @@ public:
     std::mutex mutex_nodes_queue;
 
     std::unordered_map<uint64_t, node> nodes;
-    std::unordered_map<std::string, way> ways;
+    std::unordered_map<uint64_t, way> ways;
     std::vector<std::reference_wrapper<way>> roads;
     osm_states osm_state;
     extent_poly extentp;
@@ -213,17 +234,6 @@ void osm_sax_parser::on_fatal_error(const Glib::ustring& text)
     }
 }
 
-bool strcmp_dumb(std::string& a, std::string b)
-{
-	if (a.size() != b.size())
-		return false;
-	for (int x = 0; x < a.size(); x++) {
-		if (a[x] != b[x])
-			return false;
-	}
-    return true;
-}
-
 osm_sax_parser::osm_sax_parser() : xmlpp::SaxParser()
 {
     node_count = 0;
@@ -265,7 +275,7 @@ void osm_sax_parser::on_start_element(const Glib::ustring& name,
 			value = attr_pair.value;
 
             if (attrname =="id"){
-                newnode.id = value;
+                newnode.id = std::stoll(value);
                 continue;
             }
             if (attrname == "lat"){
@@ -292,10 +302,12 @@ void osm_sax_parser::on_start_element(const Glib::ustring& name,
             name = attr_pair.name;
             value = attr_pair.value;
 
+            new_way.tags[name] = value;
+
             if (name == "id") {
-                new_way.id = value;
-                break;
+                new_way.id = std::stoll(value);
             }
+
 
         }
         way_count++;
@@ -306,16 +318,11 @@ void osm_sax_parser::on_start_element(const Glib::ustring& name,
         std::string name, value;
         for (const auto& attr_pair : attributes)
         {
-            try {
-                name = attr_pair.name;
-                value = attr_pair.value;
-            }
-            catch (const Glib::ConvertError& ex)
-            {
-                std::cerr << "osm_sax_parser::on_start_element(): Exception caught while converting name for std::cout: " << ex.what() << std::endl;
-            }
+            name = attr_pair.name;
+            value = attr_pair.value;
+
             if (name == "ref")
-                nd.id = value;
+                nd.id = std::stoll(value);
         }
         new_way.nodes.emplace_back(nd);
         nd_count++;
@@ -326,14 +333,9 @@ void osm_sax_parser::on_start_element(const Glib::ustring& name,
             std::string name, value, k, v;
             for (const auto& attr_pair : attributes)
             {
-                try {
-                    name = attr_pair.name;
-                    value = attr_pair.value;
-                }
-                catch (const Glib::ConvertError& ex)
-                {
-                    std::cerr << "osm_sax_parser::on_start_element(): Exception caught while converting name for std::cout: " << ex.what() << std::endl;
-                }
+                name = attr_pair.name;
+                value = attr_pair.value;
+
                 if (name == "k")
                     k = value;
                 if (name == "v")
